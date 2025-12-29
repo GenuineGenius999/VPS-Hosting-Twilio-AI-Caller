@@ -5,7 +5,9 @@ import { Session } from "./types";
 const sessions = new Map<string, Session>();
 
 export function handleCallConnection(ws: WebSocket, openAIApiKey: string) {
-  ws.on("message", (data) => handleTwilioMessage(ws, data, openAIApiKey));
+  ws.on("message", (data) =>
+    handleTwilioMessage(ws, data, openAIApiKey)
+  );
   ws.on("close", () => cleanupByTwilio(ws));
 }
 
@@ -17,8 +19,6 @@ export function handleFrontendConnection(ws: WebSocket) {
     if (session) session.frontendConn = ws;
   });
 }
-
-// ------------------------ Core Logic ------------------------
 
 function handleTwilioMessage(
   ws: WebSocket,
@@ -35,20 +35,15 @@ function handleTwilioMessage(
       const session: Session = {
         streamSid,
         twilioConn: ws,
+        openAIApiKey,
         latestMediaTimestamp: 0,
         hasUserSpoken: false,
         hasAssistantSpoken: false,
-        state: "connected",
-        functionCalls: 0,
-        interrupts: 0,
-        startedAt: Date.now(),
-        fallbackCount: 0,
       };
 
       sessions.set(streamSid, session);
-      connectModel(session, openAIApiKey);
+      connectModel(session);
 
-      // Greeting / idle timer
       session.greetingTimer = setTimeout(() => {
         if (!session.hasUserSpoken && !session.hasAssistantSpoken) {
           sendGreeting(session);
@@ -61,11 +56,6 @@ function handleTwilioMessage(
     case "media": {
       const session = sessions.get(msg.streamSid);
       if (!session || !session.modelConn) return;
-
-      if (!msg.media.payload) {
-        sendFallback(session, "I didn’t hear anything. Could you repeat?");
-        return;
-      }
 
       session.latestMediaTimestamp = msg.media.timestamp;
 
@@ -82,14 +72,12 @@ function handleTwilioMessage(
   }
 }
 
-// ------------------------ AI Model Connection ------------------------
-
-function connectModel(session: Session, openAIApiKey: string) {
+function connectModel(session: Session) {
   session.modelConn = new WebSocket(
     "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
     {
       headers: {
-        Authorization: `Bearer ${openAIApiKey}`,
+        Authorization: `Bearer ${session.openAIApiKey}`,
         "OpenAI-Beta": "realtime=v1",
       },
     }
@@ -111,13 +99,10 @@ function connectModel(session: Session, openAIApiKey: string) {
     });
   });
 
-  session.modelConn.on("message", (data) => handleModelMessage(session, data));
-
-  session.modelConn.on("error", () => sendFallback(session));
-  session.modelConn.on("close", () => closeSession(session.streamSid));
+  session.modelConn.on("message", (data) =>
+    handleModelMessage(session, data)
+  );
 }
-
-// ------------------------ Model Event Handling ------------------------
 
 function handleModelMessage(session: Session, data: RawData) {
   const event = parse(data);
@@ -139,7 +124,9 @@ function handleModelMessage(session: Session, data: RawData) {
       session.responseStartTimestamp = session.latestMediaTimestamp;
     }
 
-    if (event.item_id) session.lastAssistantItemId = event.item_id;
+    if (event.item_id) {
+      session.lastAssistantItemId = event.item_id;
+    }
 
     send(session.twilioConn!, {
       event: "media",
@@ -151,21 +138,33 @@ function handleModelMessage(session: Session, data: RawData) {
   if (event.type === "response.output_item.done") {
     const item = event.item;
     if (item.type === "function_call") {
-      safeRunFunction(item, session);
+      runFunction(item).then((output) => {
+        send(session.modelConn!, {
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: item.call_id,
+            output,
+          },
+        });
+        send(session.modelConn!, { type: "response.create" });
+      });
     }
   }
 
   session.frontendConn && send(session.frontendConn, event);
 }
 
-// ------------------------ Helper Functions ------------------------
-
 function interruptAssistant(session: Session) {
-  if (!session.lastAssistantItemId || session.responseStartTimestamp === undefined)
+  if (
+    !session.lastAssistantItemId ||
+    session.responseStartTimestamp === undefined
+  )
     return;
 
   const elapsedMs =
-    (session.latestMediaTimestamp ?? 0) - (session.responseStartTimestamp ?? 0);
+    (session.latestMediaTimestamp ?? 0) -
+    (session.responseStartTimestamp ?? 0);
 
   send(session.modelConn!, {
     type: "conversation.item.truncate",
@@ -184,7 +183,6 @@ function interruptAssistant(session: Session) {
   session.hasAssistantSpoken = false;
 }
 
-// Greeting
 function sendGreeting(session: Session) {
   if (!session.modelConn || session.hasAssistantSpoken) return;
 
@@ -207,78 +205,16 @@ function sendGreeting(session: Session) {
   send(session.modelConn, { type: "response.create" });
 }
 
-// ------------------------ Fallback Feature ------------------------
+async function runFunction(item: any): Promise<string> {
+  const fn = functions.find((f) => f.schema.name === item.name);
+  if (!fn) return JSON.stringify({ error: "Unknown function" });
 
-function sendFallback(session: Session, message = "I’m sorry, I didn’t understand that.") {
-  if (!session.modelConn || session.hasAssistantSpoken) return;
-
-  session.fallbackCount = (session.fallbackCount || 0) + 1;
-
-  if (session.fallbackCount >= 3) {
-    escalateToHuman(session);
-    return;
-  }
-
-  send(session.modelConn, {
-    type: "conversation.item.create",
-    item: {
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text: message }],
-    },
-  });
-  send(session.modelConn, { type: "response.create" });
-
-  session.hasAssistantSpoken = true;
-}
-
-// ------------------------ Human Escalation ------------------------
-
-function escalateToHuman(session: Session) {
-  const agentNumber = "+12702017480"; // Replace with your real agent number
-  const twiml = `
-    <Response>
-      <Say>Sorry, I’m unable to help. Connecting you to a support agent now.</Say>
-      <Dial>${agentNumber}</Dial>
-    </Response>
-  `;
-
-  send(session.twilioConn!, {
-    event: "transfer",
-    streamSid: session.streamSid,
-    twiml: twiml,
-  });
-
-  closeSession(session.streamSid);
-}
-
-// ------------------------ Function Call Wrapper ------------------------
-
-async function safeRunFunction(item: any, session: Session) {
   try {
-    const fn = functions.find((f) => f.schema.name === item.name);
-    if (!fn) {
-      sendFallback(session, "Unknown function requested.");
-      return;
-    }
-
-    const output = await fn.handler(JSON.parse(item.arguments));
-    send(session.modelConn!, {
-      type: "conversation.item.create",
-      item: {
-        type: "function_call_output",
-        call_id: item.call_id,
-        output,
-      },
-    });
-    send(session.modelConn!, { type: "response.create" });
-  } catch (err: any) {
-    console.error("Function call failed:", err);
-    sendFallback(session, "Sorry, I couldn’t complete that task.");
+    return await fn.handler(JSON.parse(item.arguments));
+  } catch (e: any) {
+    return JSON.stringify({ error: e.message });
   }
 }
-
-// ------------------------ Session Cleanup ------------------------
 
 function closeSession(streamSid: string) {
   const session = sessions.get(streamSid);
@@ -301,8 +237,6 @@ function cleanupByTwilio(ws: WebSocket) {
     }
   }
 }
-
-// ------------------------ Utility ------------------------
 
 function send(ws: WebSocket, payload: any) {
   if (ws.readyState === WebSocket.OPEN) {

@@ -1,46 +1,33 @@
 import { WebSocket } from "ws";
 
-export type SessionState =
-  | "connected"
-  | "greeting"
-  | "listening"
-  | "speaking"
-  | "closed";
-
 export interface Session {
   streamSid: string;
 
-  // Connections
-  twilioConn: WebSocket;
+  twilioConn?: WebSocket;
   modelConn?: WebSocket;
   frontendConn?: WebSocket;
 
-  // Timing & state
-  latestMediaTimestamp: number;
-  state: SessionState;
-  hasUserSpoken: boolean;
-  hasAssistantSpoken: boolean;
+  openAIApiKey: string;
+
+  latestMediaTimestamp?: number;
+
+  hasUserSpoken?: boolean;
+  hasAssistantSpoken?: boolean;
   greetingTimer?: NodeJS.Timeout;
 
-  // Interrupts
+  // 🔴 REQUIRED for interruption
   lastAssistantItemId?: string;
   responseStartTimestamp?: number;
-
-  // Limits & tracking
-  functionCalls: number;
-  interrupts: number;
-  startedAt: number;
-  fallbackCount: number;
 }
 
-export interface FunctionSchema<T = any> {
+export interface FunctionSchema {
   name: string;
   type: "function";
   description?: string;
-  parameters: T;
+  parameters: any;
 }
 
-export interface FunctionHandler<TArgs = any> {
+export interface FunctionHandler {
   schema: FunctionSchema;
-  handler: (args: TArgs) => Promise<string>;
+  handler: (args: any) => Promise<string>;
 }

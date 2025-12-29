@@ -29,7 +29,10 @@ app.use(express.urlencoded({ extended: false }));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-const twimlTemplate = readFileSync(join(__dirname, "twiml.xml"), "utf-8");
+const twimlTemplate = readFileSync(
+  join(__dirname, "twiml.xml"),
+  "utf-8"
+);
 
 app.all("/twiml", (_, res) => {
   const wsUrl = new URL(PUBLIC_URL);

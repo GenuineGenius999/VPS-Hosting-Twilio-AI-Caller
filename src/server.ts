@@ -34,6 +34,10 @@ const twimlTemplate = readFileSync(
   "utf-8"
 );
 
+const escalationTemplate = readFileSync(
+  join(__dirname, "escalation.xml"),
+);
+
 app.all("/twiml", (_, res) => {
   const wsUrl = new URL(PUBLIC_URL);
   wsUrl.protocol = "wss:";
@@ -47,6 +51,12 @@ app.all("/twiml", (_, res) => {
 app.get("/tools", (_, res) => {
   res.json(functions.map((f) => f.schema));
 });
+
+// Escalation
+app.post("/escalate", (_, res) => {
+  res.type("text/xml").send(escalationTemplate);
+});
+
 
 wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
   const url = new URL(req.url || "", `http://${req.headers.host}`);
@@ -64,3 +74,5 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
 server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
+
+exports.module = app;

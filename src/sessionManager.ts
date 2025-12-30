@@ -147,18 +147,19 @@ function triggerEscalation(session: Session) {
   session.escalationTriggered = true;
   console.log("🚨 Escalation triggered for", session.streamSid);
  
-    // Clear any buffered audio on Twilio
-  try {
-    send(session.twilioConn!, {
-      event: "clear",
-      streamSid: session.streamSid,
-    });
-  } catch { }
 
   // Close Twilio stream (this triggers /escalate via <Connect action>)
   setTimeout(() => {
     try {
+
+      // Clear any buffered audio on Twilio
+      send(session.twilioConn!, {
+        event: "clear",
+        streamSid: session.streamSid,
+      });
+
       session.modelConn?.close();
+  
       session.twilioConn?.close();  
     } catch { }
   }, 2500); // small delay = more reliable redirect

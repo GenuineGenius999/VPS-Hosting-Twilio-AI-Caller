@@ -113,7 +113,7 @@ function connectModel(session: Session) {
 
         //   Conversation rules (IMPORTANT! Don't forget):
         //   4. If the caller asks for escalation, please say ok and //escalation// at the end of the transcription.
- 
+
         //   Please NEVER forget the rules.
 
         // IMPORTANT RESPONSE RULES:
@@ -146,7 +146,7 @@ function triggerEscalation(session: Session) {
 
   session.escalationTriggered = true;
   console.log("🚨 Escalation triggered for", session.streamSid);
- 
+
 
   // Close Twilio stream (this triggers /escalate via <Connect action>)
   setTimeout(() => {
@@ -159,8 +159,8 @@ function triggerEscalation(session: Session) {
       });
 
       session.modelConn?.close();
-  
-      session.twilioConn?.close();  
+
+      session.twilioConn?.close();
     } catch { }
   }, 2500); // small delay = more reliable redirect
 }
@@ -211,31 +211,33 @@ function handleModelMessage(session: Session, data: RawData) {
     // updated part
 
     if (item && item.content) {
-      if (item.content[0].transcript) {
-        const text: string = item.content[0].transcript;
-        if (item.type == "message" && text) {
-          console.log("🎭 Text:", text);
+      if (item.content.length > 0) {
+        if (item.content[0].transcript) {
+          const text: string = item.content[0].transcript;
+          if (item.type == "message" && text) {
+            console.log("🎭 Text:", text);
 
-          // Escalation
+            // Escalation
 
-          if (text.includes("/////")) {
-            triggerEscalation(session);
-            return;
+            if (text.includes("/////")) {
+              triggerEscalation(session);
+              return;
+            }
+
+            const emotionMatch = text.match(
+              /<emotion>(.*?)<\/emotion>/
+            );
+            let emotionAnalysis = null;
+            if (emotionMatch) {
+              try {
+                emotionAnalysis = JSON.parse(emotionMatch[1]);
+                console.log("🎭 Caller Emotion:", emotionAnalysis);
+              } catch { }
+            }
           }
-
-          const emotionMatch = text.match(
-            /<emotion>(.*?)<\/emotion>/
-          );
-          let emotionAnalysis = null;
-          if (emotionMatch) {
-            try {
-              emotionAnalysis = JSON.parse(emotionMatch[1]);
-              console.log("🎭 Caller Emotion:", emotionAnalysis);
-            } catch { }
+          else {
+            console.log("No result!");
           }
-        }
-        else {
-          console.log("No result!");
         }
       }
     }

@@ -203,7 +203,7 @@ function handleModelMessage(session: Session, data: RawData) {
     // console.log("Text => ", item);
     // updated part
 
-    if (item.content[0].transcript) {
+    if (item && item.content && item.content[0].transcript) {
       const text: string = item.content[0].transcript;
       if (item.type == "message" && text) {
         console.log("🎭 Text:", text);

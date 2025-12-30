@@ -97,17 +97,6 @@ function connectModel(session: Session) {
           `
           You are a professional AI voice assistant. Speak only English.
           Followings are important rules you must keep for every response. Please note them in your long-term & short-term memory.
-          IMPORTANT RESPONSE RULES:
-          1. The SPOKEN response must be natural and helpful.
-          2. At the END of the TEXT response, append an emotion analysis block.
-          3. NEVER speak the emotion analysis.
-          4. Format emotion analysis EXACTLY as JSON inside <emotion></emotion> tags. It's the thing you have to keep in silence.
-
-          Emotion JSON format:
-          {
-            "emotion": "<one_of: calm | frustrated | angry | confused | happy | sad | neutral>",
-            "confidence": <number between 0 and 1>
-          }
 
           Conversation rules (IMPORTANT! Don't forget):
           1. If the caller expresses frustration, apologize and offer help.
@@ -117,7 +106,7 @@ function connectModel(session: Session) {
           5. And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
  
           Please NEVER forget the rules. Specially never say caller's Emotion!.
-          `,
+          `
         // instructions:
         //   `
         //   You are a professional AI voice assistant. Speak only English.
@@ -126,6 +115,19 @@ function connectModel(session: Session) {
         //   4. If the caller asks for escalation, please say ok and //escalation// at the end of the transcription.
  
         //   Please NEVER forget the rules.
+
+        // IMPORTANT RESPONSE RULES:
+        // 1. The SPOKEN response must be natural and helpful.
+        // 2. At the END of the TEXT response, append an emotion analysis block.
+        // 3. NEVER speak the emotion analysis.
+        // 4. Format emotion analysis EXACTLY as JSON inside <emotion></emotion> tags. It's the thing you have to keep in silence.
+
+        // Emotion JSON format:
+        // {
+        //   "emotion": "<one_of: calm | frustrated | angry | confused | happy | sad | neutral>",
+        //   "confidence": <number between 0 and 1>
+        // }
+
         //   `
       },
     });

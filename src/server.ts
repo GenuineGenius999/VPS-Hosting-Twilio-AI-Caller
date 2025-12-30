@@ -38,6 +38,10 @@ const escalationTemplate = readFileSync(
   join(__dirname, "escalation.xml"),
 );
 
+const humanAgent = readFileSync(
+  join(__dirname, "human_agent.xml"),
+)
+
 app.all("/twiml", (_, res) => {
   const wsUrl = new URL(PUBLIC_URL);
   wsUrl.protocol = "wss:";
@@ -56,6 +60,12 @@ app.get("/tools", (_, res) => {
 app.post("/escalate", (_, res) => {
   res.type("text/xml").send(escalationTemplate);
 });
+
+// human agent
+
+app.post("/human_agent", (_, res) => {
+  res.type("text/xml").send(humanAgent);
+})
 
 
 wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {

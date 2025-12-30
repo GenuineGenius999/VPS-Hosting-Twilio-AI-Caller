@@ -114,7 +114,7 @@ function connectModel(session: Session) {
           - If the caller expresses frustration, apologize and offer help.
           - If frustration happens again, please ask him if it would be helpful to escalate to human agent.
           - If the caller repeats the same question twice or three times, please ask him if it would be helpful to escalate to human agent.
-          - If the caller asks for escalation, please apology politely and please add //escalation// at the end of the transcription. But please never say this..
+          - If the caller asks for escalation, please say ok add //escalation// at the end of the transcription. But please never say this..
           - And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
  
           Please NEVER forget the rules. Specially never say caller's Emotion!.

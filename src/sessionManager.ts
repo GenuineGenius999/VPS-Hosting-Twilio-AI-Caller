@@ -163,7 +163,7 @@ function triggerEscalation(session: Session) {
     try {
       session.twilioConn?.close();
     } catch { }
-  }, 1000); // small delay = more reliable redirect
+  }, 2500); // small delay = more reliable redirect
 }
 
 

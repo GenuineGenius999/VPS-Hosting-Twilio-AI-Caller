@@ -203,31 +203,33 @@ function handleModelMessage(session: Session, data: RawData) {
     // console.log("Text => ", item);
     // updated part
 
-    if (item && item.content && item.content[0].transcript) {
-      const text: string = item.content[0].transcript;
-      if (item.type == "message" && text) {
-        console.log("🎭 Text:", text);
+    if (item && item.content) {
+      if (item.content[0].transcript) {
+        const text: string = item.content[0].transcript;
+        if (item.type == "message" && text) {
+          console.log("🎭 Text:", text);
 
-        // Escalation
+          // Escalation
 
-        if (text.includes("//escalation//")) {
-          triggerEscalation(session);
-          return;
+          if (text.includes("//escalation//")) {
+            triggerEscalation(session);
+            return;
+          }
+
+          const emotionMatch = text.match(
+            /<emotion>(.*?)<\/emotion>/
+          );
+          let emotionAnalysis = null;
+          if (emotionMatch) {
+            try {
+              emotionAnalysis = JSON.parse(emotionMatch[1]);
+              console.log("🎭 Caller Emotion:", emotionAnalysis);
+            } catch { }
+          }
         }
-
-        const emotionMatch = text.match(
-          /<emotion>(.*?)<\/emotion>/
-        );
-        let emotionAnalysis = null;
-        if (emotionMatch) {
-          try {
-            emotionAnalysis = JSON.parse(emotionMatch[1]);
-            console.log("🎭 Caller Emotion:", emotionAnalysis);
-          } catch { }
+        else {
+          console.log("No result!");
         }
-      }
-      else {
-        console.log("No result!");
       }
     }
     // send(session.frontendConn!, {

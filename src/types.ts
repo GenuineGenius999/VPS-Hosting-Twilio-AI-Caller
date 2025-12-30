@@ -18,6 +18,10 @@ export interface Session {
   // 🔴 REQUIRED for interruption
   lastAssistantItemId?: string;
   responseStartTimestamp?: number;
+  
+  // Escalation
+  escalationTriggered?: boolean;
+  negativeEmotionCount?: number;
 }
 
 export interface FunctionSchema {
@@ -30,4 +34,12 @@ export interface FunctionSchema {
 export interface FunctionHandler {
   schema: FunctionSchema;
   handler: (args: any) => Promise<string>;
+}
+
+
+// State Handler 
+
+export interface StateHandler {
+  turn: string,
+  callState: string
 }

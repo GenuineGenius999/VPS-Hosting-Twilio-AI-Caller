@@ -1,0 +1,6 @@
+<Response>
+    <Say>Please hold while I connect you to a human agent.</Say>
+    <Dial callerId = "+12702017480">
+        <Number>+12702017480</Number>
+    </Dial>
+</Response>

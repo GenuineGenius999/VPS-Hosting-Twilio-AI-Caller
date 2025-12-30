@@ -94,7 +94,31 @@ function connectModel(session: Session) {
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
         instructions:
-          "You are a professional AI voice assistant. Speak only English.",
+          `
+          You are a professional AI voice assistant. Speak only English.
+
+          IMPORTANT RESPONSE RULES:
+
+          1. The SPOKEN response must be natural and helpful.
+          2. At the END of the TEXT response, append an emotion analysis block.
+          3. NEVER speak the emotion analysis.
+          4. Format emotion analysis EXACTLY as JSON inside <emotion></emotion> tags. It's the thing you have to keep in silence.
+
+          Emotion JSON format:
+          {
+            "emotion": "<one_of: calm | frustrated | angry | confused | happy | sad | neutral>",
+            "confidence": <number between 0 and 1>
+          }
+
+          Conversation rules:
+          - If the caller expresses frustration, apologize and offer help.
+          - If frustration happens again, please ask him if it would be helpful to escalate to human agent.
+          - If the caller repeats the same question twice or three times, please ask him if it would be helpful to escalate to human agent.
+          - If the caller asks for escalation, please apology politely and please add //escalation// at the end of the transcription. But please never say this..
+          - And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
+ 
+          Please NEVER forget the rules. Specially never say caller's Emotion!.
+          `,
       },
     });
   });
@@ -104,11 +128,48 @@ function connectModel(session: Session) {
   );
 }
 
+
+// Escalation HanldeR
+
+function triggerEscalation(session: Session) {
+  if (session.escalationTriggered) return;
+
+  session.escalationTriggered = true;
+  console.log("🚨 Escalation triggered for", session.streamSid);
+
+  // Stop AI immediately
+  try {
+    session.modelConn?.close();
+  } catch { }
+
+  // Clear any buffered audio on Twilio
+  try {
+    send(session.twilioConn!, {
+      event: "clear",
+      streamSid: session.streamSid,
+    });
+  } catch { }
+
+  // Close Twilio stream (this triggers /escalate via <Connect action>)
+  setTimeout(() => {
+    try {
+      session.twilioConn?.close();
+    } catch { }
+  }, 1000); // small delay = more reliable redirect
+}
+
+
+
+
+
+
 function handleModelMessage(session: Session, data: RawData) {
   const event = parse(data);
+  // console.log("Model Event:", event);
+
   if (!event) return;
 
-  if (event.type === "input_audio_buffer.speech_started") {
+  if (event.type === "input_audio_buffer.speech_started") { // Incoming voice from Twilio to OpenAI Realtime
     session.hasUserSpoken = true;
     if (session.greetingTimer) {
       clearTimeout(session.greetingTimer);
@@ -117,7 +178,7 @@ function handleModelMessage(session: Session, data: RawData) {
     interruptAssistant(session);
   }
 
-  if (event.type === "response.audio.delta") {
+  if (event.type === "response.audio.delta") { // Outgoing voice from OpenAI Realtime to Twilio
     session.hasAssistantSpoken = true;
 
     if (!session.responseStartTimestamp) {
@@ -128,6 +189,7 @@ function handleModelMessage(session: Session, data: RawData) {
       session.lastAssistantItemId = event.item_id;
     }
 
+
     send(session.twilioConn!, {
       event: "media",
       streamSid: session.streamSid,
@@ -135,9 +197,48 @@ function handleModelMessage(session: Session, data: RawData) {
     });
   }
 
-  if (event.type === "response.output_item.done") {
+  if (event.type === "response.output_item.done") { // Function call handling
     const item = event.item;
+
+    // console.log("Text => ", item);
+    // updated part
+
+    if (item.content[0].transcript) {
+      const text: string = item.content[0].transcript;
+      if (item.type == "message" && text) {
+        console.log("🎭 Text:", text);
+
+        // Escalation
+
+        if (text.includes("//escalation//")) {
+          triggerEscalation(session);
+          return;
+        }
+
+        const emotionMatch = text.match(
+          /<emotion>(.*?)<\/emotion>/
+        );
+        let emotionAnalysis = null;
+        if (emotionMatch) {
+          try {
+            emotionAnalysis = JSON.parse(emotionMatch[1]);
+            console.log("🎭 Caller Emotion:", emotionAnalysis);
+          } catch { }
+        }
+      }
+      else {
+        console.log("No result!");
+      }
+    }
+    // send(session.frontendConn!, {
+    //   type: "assistant_message",
+    //   text: text.replace(/<emotion>.*?<\/emotion>/, "").trim(),
+    //   emotion: emotionAnalysis,
+    // });
+
+
     if (item.type === "function_call") {
+      console.log("Function Call");
       runFunction(item).then((output) => {
         send(session.modelConn!, {
           type: "conversation.item.create",
@@ -251,3 +352,5 @@ function parse(data: RawData) {
     return null;
   }
 }
+
+

@@ -3,27 +3,93 @@ import functions from "./functionHandlers";
 import { Session } from "./types";
 
 const sessions = new Map<string, Session>();
+// Keep track of all frontend connections
+const frontendConnections = new Set<WebSocket>();
 
-export function handleCallConnection(ws: WebSocket, openAIApiKey: string) {
+// Temporary storage for call info from webhook before WebSocket connects
+// Key: CallSid, Value: { from, to }
+const pendingCallInfo = new Map<string, { from: string; to: string }>();
+
+// Export function to store call info from webhook
+export function storeCallInfo(callSid: string, from: string, to: string) {
+  pendingCallInfo.set(callSid, { from, to });
+  console.log(`📞 Stored call info for CallSid ${callSid}: From=${from}, To=${to}`);
+}
+
+// Helper to retrieve and remove call info
+function retrieveCallInfo(callSid: string | undefined): { from?: string; to?: string } | null {
+  if (!callSid) return null;
+  const info = pendingCallInfo.get(callSid);
+  if (info) {
+    pendingCallInfo.delete(callSid); // Clean up after retrieval
+    return info;
+  }
+  return null;
+}
+
+export function handleCallConnection(ws: WebSocket, openAIApiKey: string, callSidFromUrl?: string) {
   ws.on("message", (data) =>
-    handleTwilioMessage(ws, data, openAIApiKey)
+    handleTwilioMessage(ws, data, openAIApiKey, callSidFromUrl)
   );
   ws.on("close", () => cleanupByTwilio(ws));
 }
 
 export function handleFrontendConnection(ws: WebSocket) {
+  // Add frontend connection to the set
+  frontendConnections.add(ws);
+  console.log(`Frontend connected. Total frontend connections: ${frontendConnections.size}`);
+
+  // Handle messages from frontend (e.g., session updates)
   ws.on("message", (data) => {
     const msg = parse(data);
-    if (!msg?.streamSid) return;
-    const session = sessions.get(msg.streamSid);
-    if (session) session.frontendConn = ws;
+    if (!msg) return;
+
+    // Handle session.update messages - forward to all active sessions
+    if (msg.type === "session.update") {
+      console.log("Received session.update from frontend");
+      // Forward to all active sessions
+      for (const session of sessions.values()) {
+        if (session.modelConn && session.modelConn.readyState === WebSocket.OPEN) {
+          send(session.modelConn, msg);
+        }
+      }
+      return;
+    }
+
+    // Legacy support: if frontend sends streamSid, associate with that session
+    if (msg.streamSid) {
+      const session = sessions.get(msg.streamSid);
+      if (session) {
+        session.frontendConn = ws;
+        console.log(`Frontend associated with session ${msg.streamSid}`);
+      }
+    }
+  });
+
+  // Remove from set when disconnected
+  ws.on("close", () => {
+    frontendConnections.delete(ws);
+    console.log(`Frontend disconnected. Total frontend connections: ${frontendConnections.size}`);
+    
+    // Also remove from any sessions that reference it
+    for (const session of sessions.values()) {
+      if (session.frontendConn === ws) {
+        session.frontendConn = undefined;
+      }
+    }
+  });
+
+  ws.on("error", (error) => {
+    console.error("Frontend WebSocket error:", error);
+    frontendConnections.delete(ws);
   });
 }
 
 function handleTwilioMessage(
   ws: WebSocket,
   data: RawData,
-  openAIApiKey: string
+  openAIApiKey: string,
+  callSidFromUrl?: string
 ) {
   const msg = parse(data);
   if (!msg) return;
@@ -31,17 +97,47 @@ function handleTwilioMessage(
   switch (msg.event) {
     case "start": {
       const streamSid = msg.start.streamSid;
+      // Try to get callSid from start event, URL query param, or start event metadata
+      const callSid = msg.start.callSid || 
+                      callSidFromUrl || 
+                      msg.start.start?.callSid ||
+                      msg.start.metadata?.callSid;
+      
+      console.log(`📞 Call started - StreamSid: ${streamSid}, CallSid: ${callSid}`);
+      console.log(`📞 Start event structure:`, JSON.stringify(msg.start, null, 2));
 
+      // Retrieve call info from webhook (if available)
+      const callInfo = retrieveCallInfo(callSid) || {};
+      
+      if (callInfo.from) {
+        console.log(`📞 Retrieved call info - From: ${callInfo.from}, To: ${callInfo.to}`);
+      } else if (callSid) {
+        console.log(`⚠️  No call info found for CallSid: ${callSid}`);
+      }
+      
       const session: Session = {
         streamSid,
+        callSid,
         twilioConn: ws,
         openAIApiKey,
         latestMediaTimestamp: 0,
         hasUserSpoken: false,
         hasAssistantSpoken: false,
+        fromPhoneNumber: callInfo.from,
+        toPhoneNumber: callInfo.to,
       };
 
       sessions.set(streamSid, session);
+      
+      // Notify frontend that a call has started with phone number info
+      broadcastToFrontend({
+        type: "call.started",
+        streamSid: streamSid,
+        callSid: callSid,
+        fromPhoneNumber: callInfo.from,
+        toPhoneNumber: callInfo.to,
+      });
+      
       connectModel(session);
 
       session.greetingTimer = setTimeout(() => {
@@ -84,6 +180,8 @@ function connectModel(session: Session) {
   );
 
   session.modelConn.on("open", () => {
+    console.log(`OpenAI Realtime API connected for session ${session.streamSid}`);
+    
     send(session.modelConn!, {
       type: "session.update",
       session: {
@@ -107,35 +205,39 @@ function connectModel(session: Session) {
  
           Please NEVER forget the rules. Specially never say caller's Emotion!.
           `
-        // instructions:
-        //   `
-        //   You are a professional AI voice assistant. Speak only English.
-
-        //   Conversation rules (IMPORTANT! Don't forget):
-        //   4. If the caller asks for escalation, please say ok and //escalation// at the end of the transcription.
- 
-        //   Please NEVER forget the rules.
-
-        // IMPORTANT RESPONSE RULES:
-        // 1. The SPOKEN response must be natural and helpful.
-        // 2. At the END of the TEXT response, append an emotion analysis block.
-        // 3. NEVER speak the emotion analysis.
-        // 4. Format emotion analysis EXACTLY as JSON inside <emotion></emotion> tags. It's the thing you have to keep in silence.
-
-        // Emotion JSON format:
-        // {
-        //   "emotion": "<one_of: calm | frustrated | angry | confused | happy | sad | neutral>",
-        //   "confidence": <number between 0 and 1>
-        // }
-
-        //   `
       },
+    });
+
+    // Notify frontend that a new session was created with phone number info
+    broadcastToFrontend({
+      type: "session.created",
+      session_id: session.streamSid,
+      callSid: session.callSid,
+      fromPhoneNumber: session.fromPhoneNumber,
+      toPhoneNumber: session.toPhoneNumber,
     });
   });
 
   session.modelConn.on("message", (data) =>
     handleModelMessage(session, data)
   );
+
+  session.modelConn.on("error", (error) => {
+    console.error(`OpenAI Realtime API error for session ${session.streamSid}:`, error);
+    broadcastToFrontend({
+      type: "error",
+      session_id: session.streamSid,
+      error: error.message || "Connection error",
+    });
+  });
+
+  session.modelConn.on("close", () => {
+    console.log(`OpenAI Realtime API disconnected for session ${session.streamSid}`);
+    broadcastToFrontend({
+      type: "session.disconnected",
+      session_id: session.streamSid,
+    });
+  });
 }
 
 
@@ -211,7 +313,7 @@ function handleModelMessage(session: Session, data: RawData) {
     // updated part
 
     if (item && item.content) {
-      if (item.content[0].transcript) {
+      if (item.content[0]?.transcript) {
         const text: string = item.content[0].transcript;
         if (item.type == "message" && text) {
           console.log("🎭 Text:", text);
@@ -239,12 +341,6 @@ function handleModelMessage(session: Session, data: RawData) {
         }
       }
     }
-    // send(session.frontendConn!, {
-    //   type: "assistant_message",
-    //   text: text.replace(/<emotion>.*?<\/emotion>/, "").trim(),
-    //   emotion: emotionAnalysis,
-    // });
-
 
     if (item.type === "function_call") {
       console.log("Function Call");
@@ -261,8 +357,16 @@ function handleModelMessage(session: Session, data: RawData) {
       });
     }
   }
-
-  session.frontendConn && send(session.frontendConn, event);
+  
+  // Broadcast event to all frontend connections with phone number context
+  const eventWithPhoneInfo = {
+    ...event,
+    // Include phone numbers if available in session
+    ...(session.fromPhoneNumber && { fromPhoneNumber: session.fromPhoneNumber }),
+    ...(session.toPhoneNumber && { toPhoneNumber: session.toPhoneNumber }),
+    ...(session.callSid && { callSid: session.callSid }),
+  };
+  broadcastToFrontend(eventWithPhoneInfo);
 }
 
 function interruptAssistant(session: Session) {
@@ -330,6 +434,17 @@ function closeSession(streamSid: string) {
   const session = sessions.get(streamSid);
   if (!session) return;
 
+  console.log(`📞 Call ended - StreamSid: ${streamSid}`);
+
+  // Notify frontend that call has ended with phone number info
+  broadcastToFrontend({
+    type: "call.ended",
+    streamSid: streamSid,
+    callSid: session.callSid,
+    fromPhoneNumber: session.fromPhoneNumber,
+    toPhoneNumber: session.toPhoneNumber,
+  });
+
   session.twilioConn?.close();
   session.modelConn?.close();
   session.frontendConn?.close();
@@ -348,6 +463,31 @@ function cleanupByTwilio(ws: WebSocket) {
   }
 }
 
+function broadcastToFrontend(event: any) {
+  // Broadcast to all connected frontend clients
+  const eventJson = JSON.stringify(event);
+  let sentCount = 0;
+  
+  for (const frontendWs of frontendConnections) {
+    if (frontendWs.readyState === WebSocket.OPEN) {
+      try {
+        frontendWs.send(eventJson);
+        sentCount++;
+      } catch (error) {
+        console.error("Error sending to frontend:", error);
+        frontendConnections.delete(frontendWs);
+      }
+    } else {
+      // Remove closed connections
+      frontendConnections.delete(frontendWs);
+    }
+  }
+  
+  // if (sentCount > 0) {
+  //   console.log(`Broadcasted event ${event.type} to ${sentCount} frontend connection(s)`);
+  // }
+}
+
 function send(ws: WebSocket, payload: any) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
@@ -361,5 +501,3 @@ function parse(data: RawData) {
     return null;
   }
 }
-
-

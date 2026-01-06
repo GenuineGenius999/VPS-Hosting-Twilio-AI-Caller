@@ -22,6 +22,11 @@ export interface Session {
   // Escalation
   escalationTriggered?: boolean;
   negativeEmotionCount?: number;
+
+  // Call metadata
+  callSid?: string;
+  fromPhoneNumber?: string;
+  toPhoneNumber?: string;
 }
 
 export interface FunctionSchema {

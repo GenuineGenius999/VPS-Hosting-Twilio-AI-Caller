@@ -9,6 +9,7 @@ import cors from "cors";
 import {
   handleCallConnection,
   handleFrontendConnection,
+  storeCallInfo,
 } from "./sessionManager";
 import functions from "./functionHandlers";
 
@@ -25,6 +26,7 @@ if (!PUBLIC_URL || !OPENAI_API_KEY) {
 const app = express();
 app.use(cors());
 app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -42,10 +44,34 @@ const humanAgent = readFileSync(
   join(__dirname, "human_agent.xml"),
 )
 
-app.all("/twiml", (_, res) => {
+app.get("/public-url", (req, res) => {
+  res.json({ publicUrl: PUBLIC_URL });
+});
+
+app.all("/twiml", (req, res) => {
   const wsUrl = new URL(PUBLIC_URL);
   wsUrl.protocol = "wss:";
   wsUrl.pathname = "/call";
+  
+  // Extract call information from Twilio webhook
+  const callSid = req.body?.CallSid || req.query?.CallSid;
+  const fromPhoneNumber = req.body?.From || req.query?.From;
+  const toPhoneNumber = req.body?.To || req.query?.To;
+  
+  console.log("📞 TwiML webhook received:", {
+    CallSid: callSid,
+    From: fromPhoneNumber,
+    To: toPhoneNumber,
+    body: req.body,
+  });
+
+  // Store call info for later retrieval when WebSocket connects
+  if (callSid && fromPhoneNumber) {
+    storeCallInfo(callSid, fromPhoneNumber, toPhoneNumber || "");
+    
+    // Also pass CallSid as query parameter in WebSocket URL as fallback
+    wsUrl.searchParams.set("CallSid", callSid);
+  }
 
   res
     .type("text/xml")
@@ -73,7 +99,9 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
   const path = url.pathname.replace("/", "");
 
   if (path === "call") {
-    handleCallConnection(ws, OPENAI_API_KEY);
+    // Extract CallSid from query parameters if present
+    const callSidFromUrl = url.searchParams.get("CallSid") || undefined;
+    handleCallConnection(ws, OPENAI_API_KEY, callSidFromUrl);
   } else if (path === "logs") {
     handleFrontendConnection(ws);
   } else {

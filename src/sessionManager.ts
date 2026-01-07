@@ -539,7 +539,7 @@ function handleSilence(session: Session) {
       content: [
         {
           type: "text",
-          text: "Please suggest the end of call?",
+          text: "It seems like you are silent. Do you want to end the call?",
         },
       ],
     },

@@ -5,6 +5,7 @@ import { escalationTemplate } from "./server";
 
 export let escalationTem = escalationTemplate;
 
+
 const sessions = new Map<string, Session>();
 
 // Keep track of all frontend connections
@@ -206,31 +207,33 @@ function handleTwilioMessage(
 }
 
 function connectModel(session: Session) {
-  session.modelConn = new WebSocket(
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
-    {
-      headers: {
-        Authorization: `Bearer ${session.openAIApiKey}`,
-        "OpenAI-Beta": "realtime=v1",
-      },
-    }
-  );
-
-  session.modelConn.on("open", () => {
-    send(session.modelConn!, {
-      type: "session.update",
-      session: {
-        modalities: ["audio", "text"],
-        voice: "ash",
-        turn_detection: {
-          type: "server_vad",
-          silence_duration_ms: 500
+  try {
+    session.modelConn = new WebSocket(
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+      {
+        headers: {
+          Authorization: `Bearer ${session.openAIApiKey}`,
+          "OpenAI-Beta": "realtime=v1",
         },
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        input_audio_transcription: { model: "whisper-1" },
-        instructions:
-          `
+      }
+    );
+
+    session.modelConn.on("open", () => {
+      send(session.modelConn!, {
+        type: "session.update",
+        session: {
+          modalities: ["audio", "text"],
+          voice: "ash",
+          turn_detection: {
+            type: "server_vad",
+            silence_duration_ms: 500,
+            threshold: 1.0,
+          },
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          input_audio_transcription: { model: "whisper-1" },
+          instructions:
+            `
           You are a professional AI voice assistant. Speak only English.
           Followings are important rules you must keep for every response. Please note them in your long-term & short-term memory.
 
@@ -241,41 +244,43 @@ function connectModel(session: Session) {
           4. If the caller asks for escalation, please just say "ok no problem, I will connect you." and add ///// at the end of the transcription.
           5. And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
           6. And when caller asks to end the call, please add /?/ at the end of the transcription.
+          7. If the caller sends "<<Silence>>", please say "It seems that we are not in the session. How about we end the suggest call?".
           Please NEVER forget the rules. Specially never say caller's Emotion!.
           `
-      },
+        },
+      });
+
+      // Notify frontend that a new session was created with phone number info
+      broadcastToFrontend({
+        type: "session.created",
+        session_id: session.streamSid,
+        callSid: session.callSid,
+        fromPhoneNumber: session.fromPhoneNumber,
+        toPhoneNumber: session.toPhoneNumber,
+      });
     });
 
-    // Notify frontend that a new session was created with phone number info
-    broadcastToFrontend({
-      type: "session.created",
-      session_id: session.streamSid,
-      callSid: session.callSid,
-      fromPhoneNumber: session.fromPhoneNumber,
-      toPhoneNumber: session.toPhoneNumber,
-    });
-  });
+    session.modelConn.on("message", (data) =>
+      handleModelMessage(session, data)
+    );
 
-  session.modelConn.on("message", (data) =>
-    handleModelMessage(session, data)
-  );
-
-  session.modelConn.on("error", (error) => {
-    console.error(`OpenAI Realtime API error for session ${session.streamSid}:`, error);
-    broadcastToFrontend({
-      type: "error",
-      session_id: session.streamSid,
-      error: error.message || "Connection error",
+    session.modelConn.on("error", (error) => {
+      console.error(`OpenAI Realtime API error for session ${session.streamSid}:`, error);
+      broadcastToFrontend({
+        type: "error",
+        session_id: session.streamSid,
+        error: error.message || "Connection error",
+      });
     });
-  });
 
-  session.modelConn.on("close", () => {
-    console.log(`OpenAI Realtime API disconnected for session ${session.streamSid}`);
-    broadcastToFrontend({
-      type: "session.disconnected",
-      session_id: session.streamSid,
+    session.modelConn.on("close", () => {
+      console.log(`OpenAI Realtime API disconnected for session ${session.streamSid}`);
+      broadcastToFrontend({
+        type: "session.disconnected",
+        session_id: session.streamSid,
+      });
     });
-  });
+  } catch { }
 }
 
 
@@ -317,25 +322,26 @@ function triggerEscalation(session: Session) {
 // end call
 
 function endCall(session: Session) {
-  if (session.callerState == "silence") {
-    session.silenceTimer = setTimeout(() => {
-      escalationTem = escalationTemplate.replace("{{REASON}}", "Good bye. See you again.").replace(`<Dial callerId = "+12702017480"><Number>+12702017480</Number></Dial>`, " ");
-    }, 4000);
-  }
+  try {
+    if (session.callerState == "silence") {
+      session.silenceTimer = setTimeout(() => {
 
-  setTimeout(() => {
-    try {
-      // Clear any buffered audio on Twilio
-      send(session.twilioConn!, {
-        event: "clear",
-        streamSid: session.streamSid,
-      });
+        escalationTem = `<Response><Say>Good bye! See you again.</Say></Response>`;
+        console.log(escalationTem, "escalationTem");
+        console.log(escalationTemplate, "escalationTemplate");
+      }, 4000);
+    }
 
-      session.modelConn?.close();
+    // Clear any buffered audio on Twilio
+    send(session.twilioConn!, {
+      event: "clear",
+      streamSid: session.streamSid,
+    });
 
-      session.twilioConn?.close();
-    } catch { }
-  }, 2500); // small delay = more reliable redirect
+    session.twilioConn?.close();
+
+    session.modelConn?.close();
+  } catch { }
 }
 
 function handleModelMessage(session: Session, data: RawData) {
@@ -448,7 +454,7 @@ function handleModelMessage(session: Session, data: RawData) {
             return;
           }
 
-          if (text.includes ("/?/")) {
+          if (text.includes("/?/")) {
             endCall(session)
           }
 
@@ -538,11 +544,11 @@ function handleSilence(session: Session) {
     type: "conversation.item.create",
     item: {
       type: "message",
-      role: "assistant",
+      role: "user",
       content: [
         {
-          type: "text",
-          text: "It seems like you are silent. Do you want to end the call?",
+          type: "input_text",
+          text: "<<Silence>>",
         },
       ],
     },
@@ -550,9 +556,6 @@ function handleSilence(session: Session) {
 
   send(session.modelConn, {
     type: "response.create",
-    response: {
-      modalities: ["audio"],
-    },
   });
 }
 

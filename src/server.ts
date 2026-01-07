@@ -7,10 +7,12 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import cors from "cors";
 import {
+  escalationTem,
   handleCallConnection,
   handleFrontendConnection,
-  storeCallInfo,
+  storeCallInfo
 } from "./sessionManager";
+
 import functions from "./functionHandlers";
 
 dotenv.config();
@@ -36,28 +38,26 @@ const twimlTemplate = readFileSync(
   "utf-8"
 );
 
-const escalationTemplate = readFileSync(
+export const escalationTemplate = readFileSync(
   join(__dirname, "escalation.xml"),
+  "utf-8"
 );
 
 const humanAgent = readFileSync(
   join(__dirname, "human_agent.xml"),
+  "utf-8"
 )
-
-app.get("/public-url", (req, res) => {
-  res.json({ publicUrl: PUBLIC_URL });
-});
 
 app.all("/twiml", (req, res) => {
   const wsUrl = new URL(PUBLIC_URL);
   wsUrl.protocol = "wss:";
   wsUrl.pathname = "/call";
-  
+
   // Extract call information from Twilio webhook
   const callSid = req.body?.CallSid || req.query?.CallSid;
   const fromPhoneNumber = req.body?.From || req.query?.From;
   const toPhoneNumber = req.body?.To || req.query?.To;
-  
+
   console.log("📞 TwiML webhook received:", {
     CallSid: callSid,
     From: fromPhoneNumber,
@@ -68,7 +68,7 @@ app.all("/twiml", (req, res) => {
   // Store call info for later retrieval when WebSocket connects
   if (callSid && fromPhoneNumber) {
     storeCallInfo(callSid, fromPhoneNumber, toPhoneNumber || "");
-    
+
     // Also pass CallSid as query parameter in WebSocket URL as fallback
     wsUrl.searchParams.set("CallSid", callSid);
   }
@@ -82,9 +82,14 @@ app.get("/tools", (_, res) => {
   res.json(functions.map((f) => f.schema));
 });
 
+
+app.get("/public-url", (req, res) => {
+  res.json({ publicUrl: PUBLIC_URL });
+});
+
 // Escalation
 app.post("/escalate", (_, res) => {
-  res.type("text/xml").send(escalationTemplate);
+  res.type("text/xml").send(escalationTem);
 });
 
 // human agent
@@ -99,7 +104,6 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
   const path = url.pathname.replace("/", "");
 
   if (path === "call") {
-    // Extract CallSid from query parameters if present
     const callSidFromUrl = url.searchParams.get("CallSid") || undefined;
     handleCallConnection(ws, OPENAI_API_KEY, callSidFromUrl);
   } else if (path === "logs") {

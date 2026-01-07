@@ -226,8 +226,8 @@ function connectModel(session: Session) {
           voice: "ash",
           turn_detection: {
             type: "server_vad",
-            silence_duration_ms: 500,
-            threshold: 1.0,
+            silence_duration_ms: 1000,
+            threshold: 0.7,
           },
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
@@ -312,9 +312,9 @@ function triggerEscalation(session: Session) {
         streamSid: session.streamSid,
       });
 
-      session.modelConn?.close();
-
+      
       session.twilioConn?.close();
+      session.modelConn?.close();
     } catch { }
   }, 2500); // small delay = more reliable redirect
 }
@@ -332,15 +332,20 @@ function endCall(session: Session) {
       }, 4000);
     }
 
-    // Clear any buffered audio on Twilio
-    send(session.twilioConn!, {
-      event: "clear",
-      streamSid: session.streamSid,
-    });
+    // Close Twilio stream (this triggers /escalate via <Connect action>)
+    setTimeout(() => {
+      try {
+        // Clear any buffered audio on Twilio
+        send(session.twilioConn!, {
+          event: "clear",
+          streamSid: session.streamSid,
+        });
+        session.twilioConn?.close();
 
-    session.twilioConn?.close();
+        session.modelConn?.close();
 
-    session.modelConn?.close();
+      } catch { }
+    }, 2500); // small delay = more reliable redirect
   } catch { }
 }
 

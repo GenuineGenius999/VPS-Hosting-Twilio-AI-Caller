@@ -240,6 +240,7 @@ function connectModel(session: Session) {
           3. If the caller repeats the same question twice or three times, please ask him if it would be helpful to escalate to human agent.
           4. If the caller asks for escalation, please just say "ok no problem, I will connect you." and add ///// at the end of the transcription.
           5. And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
+          6. And when caller asks to end the call, please add /?/ at the end of the transcription.
           Please NEVER forget the rules. Specially never say caller's Emotion!.
           `
       },
@@ -361,8 +362,6 @@ function handleModelMessage(session: Session, data: RawData) {
         // triggerEscalation(session);
       }
       break;
-    case "":
-
     case "conversation.item.input_audio_transcription.failed":
       console.log("conversation.item.input_audio_transcription.failed:", event);
       if (event.error) {
@@ -447,6 +446,10 @@ function handleModelMessage(session: Session, data: RawData) {
           if (text.includes("/////")) {
             triggerEscalation(session);
             return;
+          }
+
+          if (text.includes ("/?/")) {
+            endCall(session)
           }
 
           const emotionMatch = text.match(

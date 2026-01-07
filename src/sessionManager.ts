@@ -312,7 +312,7 @@ function triggerEscalation(session: Session) {
         streamSid: session.streamSid,
       });
 
-      
+
       session.twilioConn?.close();
       session.modelConn?.close();
     } catch { }
@@ -459,7 +459,7 @@ function handleModelMessage(session: Session, data: RawData) {
             return;
           }
 
-          if (text.includes("/?/")) {
+          if (text.includes("/?/") && session.callerState != "silence") {
             endCall(session)
           }
 

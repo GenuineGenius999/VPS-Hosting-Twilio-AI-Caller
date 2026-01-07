@@ -1,8 +1,12 @@
 import { RawData, WebSocket } from "ws";
 import functions from "./functionHandlers";
 import { Session } from "./types";
+import { escalationTemplate } from "./server";
+
+export let escalationTem = escalationTemplate;
 
 const sessions = new Map<string, Session>();
+
 // Keep track of all frontend connections
 const frontendConnections = new Set<WebSocket>();
 
@@ -70,7 +74,7 @@ export function handleFrontendConnection(ws: WebSocket) {
   ws.on("close", () => {
     frontendConnections.delete(ws);
     console.log(`Frontend disconnected. Total frontend connections: ${frontendConnections.size}`);
-    
+
     // Also remove from any sessions that reference it
     for (const session of sessions.values()) {
       if (session.frontendConn === ws) {
@@ -97,38 +101,40 @@ function handleTwilioMessage(
   switch (msg.event) {
     case "start": {
       const streamSid = msg.start.streamSid;
+
       // Try to get callSid from start event, URL query param, or start event metadata
-      const callSid = msg.start.callSid || 
-                      callSidFromUrl || 
-                      msg.start.start?.callSid ||
-                      msg.start.metadata?.callSid;
-      
+      const callSid = msg.start.callSid ||
+        callSidFromUrl ||
+        msg.start.start?.callSid ||
+        msg.start.metadata?.callSid;
+
       console.log(`📞 Call started - StreamSid: ${streamSid}, CallSid: ${callSid}`);
       console.log(`📞 Start event structure:`, JSON.stringify(msg.start, null, 2));
 
       // Retrieve call info from webhook (if available)
       const callInfo = retrieveCallInfo(callSid) || {};
-      
+
       if (callInfo.from) {
         console.log(`📞 Retrieved call info - From: ${callInfo.from}, To: ${callInfo.to}`);
       } else if (callSid) {
         console.log(`⚠️  No call info found for CallSid: ${callSid}`);
       }
-      
+
       const session: Session = {
         streamSid,
         callSid,
         twilioConn: ws,
         openAIApiKey,
         latestMediaTimestamp: 0,
-        hasUserSpoken: false,
         hasAssistantSpoken: false,
+        isModelErr: false,
+        callerState: "idle",
         fromPhoneNumber: callInfo.from,
         toPhoneNumber: callInfo.to,
       };
 
       sessions.set(streamSid, session);
-      
+
       // Notify frontend that a call has started with phone number info
       broadcastToFrontend({
         type: "call.started",
@@ -137,11 +143,11 @@ function handleTwilioMessage(
         fromPhoneNumber: callInfo.from,
         toPhoneNumber: callInfo.to,
       });
-      
+
       connectModel(session);
 
       session.greetingTimer = setTimeout(() => {
-        if (!session.hasUserSpoken && !session.hasAssistantSpoken) {
+        if (session.callerState == "idle" && !session.hasAssistantSpoken) {
           sendGreeting(session);
         }
       }, 1000);
@@ -159,6 +165,37 @@ function handleTwilioMessage(
         type: "input_audio_buffer.append",
         audio: msg.media.payload,
       });
+      break;
+    }
+
+    case "mark": {
+      const session = sessions.get(msg.streamSid);
+      if (!session || !session.modelConn) return;
+
+      if (msg.mark.name === "ai_done") {
+
+        console.log("AI has finished speaking...");
+        if (session.silenceTimer) {
+          clearTimeout(session.silenceTimer);
+          session.silenceTimer = undefined;
+        }
+
+        session.silenceTimer = setTimeout(() => {
+          switch (session.callerState) {
+            case "idle":
+              console.log("Silence Detected");
+              handleSilence(session);
+              break;
+            case "silence":
+              console.log("Silence Detected Again, need end call.");
+              endCall(session);
+              break;
+            case "speaking":
+              session.callerState = "idle";
+              break;
+          }
+        }, 4000);
+      }
       break;
     }
 
@@ -180,14 +217,15 @@ function connectModel(session: Session) {
   );
 
   session.modelConn.on("open", () => {
-    console.log(`OpenAI Realtime API connected for session ${session.streamSid}`);
-    
     send(session.modelConn!, {
       type: "session.update",
       session: {
         modalities: ["audio", "text"],
         voice: "ash",
-        turn_detection: { type: "server_vad" },
+        turn_detection: {
+          type: "server_vad",
+          silence_duration_ms: 500
+        },
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         input_audio_transcription: { model: "whisper-1" },
@@ -202,7 +240,6 @@ function connectModel(session: Session) {
           3. If the caller repeats the same question twice or three times, please ask him if it would be helpful to escalate to human agent.
           4. If the caller asks for escalation, please just say "ok no problem, I will connect you." and add ///// at the end of the transcription.
           5. And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
- 
           Please NEVER forget the rules. Specially never say caller's Emotion!.
           `
       },
@@ -241,19 +278,28 @@ function connectModel(session: Session) {
 }
 
 
-// Escalation HanldeR
+// Escalation Handler
 
 function triggerEscalation(session: Session) {
   if (session.escalationTriggered) return;
 
   session.escalationTriggered = true;
   console.log("🚨 Escalation triggered for", session.streamSid);
- 
+
+  console.log(session.isModelErr);
+
+  if (session.isModelErr) {
+    escalationTem = escalationTemplate.replace("{{REASON}}", "Sorry. Our AI Voice Assistant is not available now. I will connect you to human agent.");
+  }
+
+  else {
+    escalationTem = escalationTemplate.replace("{{REASON}}", "Please hold while I connect you to a human agent.");
+  }
+
 
   // Close Twilio stream (this triggers /escalate via <Connect action>)
   setTimeout(() => {
     try {
-
       // Clear any buffered audio on Twilio
       send(session.twilioConn!, {
         event: "clear",
@@ -261,29 +307,90 @@ function triggerEscalation(session: Session) {
       });
 
       session.modelConn?.close();
-  
-      session.twilioConn?.close();  
+
+      session.twilioConn?.close();
     } catch { }
   }, 2500); // small delay = more reliable redirect
 }
 
+// end call
 
+function endCall(session: Session) {
+  if (session.callerState == "silence") {
+    session.silenceTimer = setTimeout(() => {
+      escalationTem = escalationTemplate.replace("{{REASON}}", "Good bye. See you again.").replace(`<Dial callerId = "+12702017480"><Number>+12702017480</Number></Dial>`, " ");
+    }, 4000);
+  }
 
+  setTimeout(() => {
+    try {
+      // Clear any buffered audio on Twilio
+      send(session.twilioConn!, {
+        event: "clear",
+        streamSid: session.streamSid,
+      });
 
+      session.modelConn?.close();
 
+      session.twilioConn?.close();
+    } catch { }
+  }, 2500); // small delay = more reliable redirect
+}
 
 function handleModelMessage(session: Session, data: RawData) {
+
   const event = parse(data);
+
   // console.log("Model Event:", event);
+  // if (JSON.stringify(event).includes("error") || JSON.stringify(event).includes("fail")) {
+  //   console.log("Error from model:", event);
+  //   triggerEscalation(session);
+  //   return;
+  // }
+
+  switch (event.type) {
+    case "error":
+      console.log("Error from model:", event);
+      // session.isModelErr = true;
+      // triggerEscalation(session);
+      break;
+    case "response.done":
+      if (event.response.output.length == 0 || event.response.status == "failed") {
+        console.log("response failed:", event);
+        // session.isModelErr = true;
+        // triggerEscalation(session);
+      }
+      break;
+    case "":
+
+    case "conversation.item.input_audio_transcription.failed":
+      console.log("conversation.item.input_audio_transcription.failed:", event);
+      if (event.error) {
+        if (event.error.message.includes("Too Many Requests")) {
+          session.isModelErr = true;
+          triggerEscalation(session);
+        }
+      }
+      // session.isModelErr = true;
+      break;
+  }
 
   if (!event) return;
 
   if (event.type === "input_audio_buffer.speech_started") { // Incoming voice from Twilio to OpenAI Realtime
-    session.hasUserSpoken = true;
+
+    // Remove silenceTimer and greetingTimer once a caller starts speaking
+    if (session.silenceTimer) {
+      clearTimeout(session.silenceTimer);
+      session.silenceTimer = undefined;
+    }
     if (session.greetingTimer) {
       clearTimeout(session.greetingTimer);
       session.greetingTimer = undefined;
     }
+
+    session.callerState = "speaking";
+
     interruptAssistant(session);
   }
 
@@ -306,6 +413,23 @@ function handleModelMessage(session: Session, data: RawData) {
     });
   }
 
+
+
+  if (event.type === "response.audio.done") {
+    send(session.twilioConn!, {
+      event: "mark",
+      streamSid: session.streamSid,
+      mark: { name: "ai_done" }
+    });
+
+    if (session.callerState == "speaking") {
+      console.log("Making caller state to idle");
+      session.callerState = "idle";
+    }
+  }
+
+
+
   if (event.type === "response.output_item.done") { // Function call handling
     const item = event.item;
 
@@ -314,12 +438,12 @@ function handleModelMessage(session: Session, data: RawData) {
 
     if (item && item.content) {
       if (item.content[0]?.transcript) {
+
         const text: string = item.content[0].transcript;
         if (item.type == "message" && text) {
-          console.log("🎭 Text:", text);
+          console.log("🎭 Text:", text, "---", session.streamSid);
 
           // Escalation
-
           if (text.includes("/////")) {
             triggerEscalation(session);
             return;
@@ -342,6 +466,7 @@ function handleModelMessage(session: Session, data: RawData) {
       }
     }
 
+
     if (item.type === "function_call") {
       console.log("Function Call");
       runFunction(item).then((output) => {
@@ -356,8 +481,9 @@ function handleModelMessage(session: Session, data: RawData) {
         send(session.modelConn!, { type: "response.create" });
       });
     }
+    // session.frontendConn && send(session.frontendConn, event);
   }
-  
+
   // Broadcast event to all frontend connections with phone number context
   const eventWithPhoneInfo = {
     ...event,
@@ -368,6 +494,7 @@ function handleModelMessage(session: Session, data: RawData) {
   };
   broadcastToFrontend(eventWithPhoneInfo);
 }
+
 
 function interruptAssistant(session: Session) {
   if (
@@ -394,12 +521,37 @@ function interruptAssistant(session: Session) {
 
   session.lastAssistantItemId = undefined;
   session.responseStartTimestamp = undefined;
-  session.hasAssistantSpoken = false;
+}
+
+function handleSilence(session: Session) {
+  if (!session.modelConn) return;
+
+  session.callerState = "silence";
+
+  console.log("CallerState changed to", session.callerState);
+  console.log("Suggesting end call...", session.callerState);
+
+  send(session.modelConn, {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "Please suggest the end of call?",
+        },
+      ],
+    },
+  });
+
+  send(session.modelConn, { type: "response.create" });
 }
 
 function sendGreeting(session: Session) {
   if (!session.modelConn || session.hasAssistantSpoken) return;
 
+  console.log("Auto-Greeting...");
   session.hasAssistantSpoken = true;
 
   send(session.modelConn, {
@@ -409,7 +561,7 @@ function sendGreeting(session: Session) {
       role: "assistant",
       content: [
         {
-          type: "output_text",
+          type: "text",
           text: "Hello, nice to meet you. What can I help you with?",
         },
       ],
@@ -463,11 +615,12 @@ function cleanupByTwilio(ws: WebSocket) {
   }
 }
 
+
 function broadcastToFrontend(event: any) {
   // Broadcast to all connected frontend clients
   const eventJson = JSON.stringify(event);
   let sentCount = 0;
-  
+
   for (const frontendWs of frontendConnections) {
     if (frontendWs.readyState === WebSocket.OPEN) {
       try {
@@ -482,11 +635,12 @@ function broadcastToFrontend(event: any) {
       frontendConnections.delete(frontendWs);
     }
   }
-  
+
   // if (sentCount > 0) {
   //   console.log(`Broadcasted event ${event.type} to ${sentCount} frontend connection(s)`);
   // }
 }
+
 
 function send(ws: WebSocket, payload: any) {
   if (ws.readyState === WebSocket.OPEN) {
@@ -501,3 +655,5 @@ function parse(data: RawData) {
     return null;
   }
 }
+
+

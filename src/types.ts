@@ -13,15 +13,22 @@ export interface Session {
 
   hasUserSpoken?: boolean;
   hasAssistantSpoken?: boolean;
+  // Greeting Handling
   greetingTimer?: NodeJS.Timeout;
+  // Silence Handling
+  idleTimer?: NodeJS.Timeout;
+  silenceTimer?: NodeJS.Timeout;
 
   // 🔴 REQUIRED for interruption
   lastAssistantItemId?: string;
   responseStartTimestamp?: number;
-  
+
   // Escalation
   escalationTriggered?: boolean;
   negativeEmotionCount?: number;
+
+  isModelErr?: boolean;
+  callerState?: string;
 
   // Call metadata
   callSid?: string;

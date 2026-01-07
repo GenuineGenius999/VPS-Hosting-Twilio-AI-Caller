@@ -545,7 +545,12 @@ function handleSilence(session: Session) {
     },
   });
 
-  send(session.modelConn, { type: "response.create" });
+  send(session.modelConn, {
+    type: "response.create",
+    response: {
+      modalities: ["audio"],
+    },
+  });
 }
 
 function sendGreeting(session: Session) {

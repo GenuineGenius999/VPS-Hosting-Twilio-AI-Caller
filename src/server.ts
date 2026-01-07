@@ -90,6 +90,8 @@ app.get("/public-url", (req, res) => {
 // Escalation
 app.post("/escalate", (_, res) => {
   res.type("text/xml").send(escalationTem);
+  console.log(escalationTem);
+  
 });
 
 // human agent
@@ -100,17 +102,20 @@ app.post("/human_agent", (_, res) => {
 
 
 wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-  const url = new URL(req.url || "", `http://${req.headers.host}`);
-  const path = url.pathname.replace("/", "");
+  try {
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const path = url.pathname.replace("/", "");
 
-  if (path === "call") {
-    const callSidFromUrl = url.searchParams.get("CallSid") || undefined;
-    handleCallConnection(ws, OPENAI_API_KEY, callSidFromUrl);
-  } else if (path === "logs") {
-    handleFrontendConnection(ws);
-  } else {
-    ws.close();
+    if (path === "call") {
+      const callSidFromUrl = url.searchParams.get("CallSid") || undefined;
+      handleCallConnection(ws, OPENAI_API_KEY, callSidFromUrl);
+    } else if (path === "logs") {
+      handleFrontendConnection(ws);
+    } else {
+      ws.close();
+    }
   }
+  catch { }
 });
 
 server.listen(PORT, () => {

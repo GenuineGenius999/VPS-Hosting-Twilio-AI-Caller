@@ -132,6 +132,8 @@ function handleTwilioMessage(
         callerState: "idle",
         fromPhoneNumber: callInfo.from,
         toPhoneNumber: callInfo.to,
+        isSpeechStopped: false,
+        isBargeInAvailable: false,
       };
 
       sessions.set(streamSid, session);
@@ -176,6 +178,7 @@ function handleTwilioMessage(
       if (msg.mark.name === "ai_done") {
 
         console.log("AI has finished speaking...");
+        session.isBargeInAvailable = false;
         if (session.silenceTimer) {
           clearTimeout(session.silenceTimer);
           session.silenceTimer = undefined;
@@ -195,7 +198,7 @@ function handleTwilioMessage(
               session.callerState = "idle";
               break;
           }
-        }, 4000);
+        }, 5000);
       }
       break;
     }
@@ -323,14 +326,9 @@ function triggerEscalation(session: Session) {
 
 function endCall(session: Session) {
   try {
-    if (session.callerState == "silence") {
-      session.silenceTimer = setTimeout(() => {
-
-        escalationTem = `<Response><Say>Good bye! See you again.</Say></Response>`;
-        console.log(escalationTem, "escalationTem");
-        console.log(escalationTemplate, "escalationTemplate");
-      }, 4000);
-    }
+    session.silenceTimer = setTimeout(() => {
+      escalationTem = `<Response><Say>Good bye! See you again.</Say></Response>`;
+    }, 4000);
 
     // Close Twilio stream (this triggers /escalate via <Connect action>)
     setTimeout(() => {
@@ -341,9 +339,7 @@ function endCall(session: Session) {
           streamSid: session.streamSid,
         });
         session.twilioConn?.close();
-
         session.modelConn?.close();
-
       } catch { }
     }, 2500); // small delay = more reliable redirect
   } catch { }
@@ -387,28 +383,51 @@ function handleModelMessage(session: Session, data: RawData) {
 
   if (!event) return;
 
+  if (event.type == "input_audio_buffer.speech_stopped") {
+    session.isSpeechStopped = true;
+    
+  }
+
   if (event.type === "input_audio_buffer.speech_started") { // Incoming voice from Twilio to OpenAI Realtime
 
     // Remove silenceTimer and greetingTimer once a caller starts speaking
-    if (session.silenceTimer) {
-      clearTimeout(session.silenceTimer);
-      session.silenceTimer = undefined;
-    }
-    if (session.greetingTimer) {
-      clearTimeout(session.greetingTimer);
-      session.greetingTimer = undefined;
+    session.isSpeechStopped = false;
+
+    if (session.speechTimer) {
+      clearTimeout(session.speechTimer);
+      session.speechTimer = undefined;
     }
 
-    session.callerState = "speaking";
+    session.speechTimer = setTimeout(() => {
 
-    interruptAssistant(session);
+      if (!session.isSpeechStopped) {
+        console.log("Caller started speaking, interrupting assistant...", session.isSpeechStopped);
+        if (session.silenceTimer) {
+          clearTimeout(session.silenceTimer);
+          session.silenceTimer = undefined;
+        }
+        if (session.greetingTimer) {
+          clearTimeout(session.greetingTimer);
+          session.greetingTimer = undefined;
+        }
+        session.isBargeInAvailable = true;
+        interruptAssistant(session);
+      }
+    }, 500)
   }
 
   if (event.type === "response.audio.delta") { // Outgoing voice from OpenAI Realtime to Twilio
+
+    //ignore/disable bargein 400ms-600ms
+
     session.hasAssistantSpoken = true;
 
     if (!session.responseStartTimestamp) {
       session.responseStartTimestamp = session.latestMediaTimestamp;
+      // it's just the starting point of assistant speaking
+      setTimeout(() => {
+        session.isBargeInAvailable = true;
+      }, 400);
     }
 
     if (event.item_id) {
@@ -460,7 +479,7 @@ function handleModelMessage(session: Session, data: RawData) {
           }
 
           if (text.includes("/?/") && session.callerState != "silence") {
-            endCall(session)
+            endCall(session);
           }
 
           const emotionMatch = text.match(
@@ -517,9 +536,13 @@ function interruptAssistant(session: Session) {
   )
     return;
 
+  if (!session.isBargeInAvailable) return;
+
   const elapsedMs =
     (session.latestMediaTimestamp ?? 0) -
     (session.responseStartTimestamp ?? 0);
+
+  session.callerState = "speaking";
 
   send(session.modelConn!, {
     type: "conversation.item.truncate",

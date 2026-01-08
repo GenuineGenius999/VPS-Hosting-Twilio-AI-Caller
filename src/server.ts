@@ -90,7 +90,6 @@ app.get("/public-url", (req, res) => {
 // Escalation
 app.post("/escalate", (_, res) => {
   res.type("text/xml").send(escalationTem);
-  console.log(escalationTem);
   
 });
 

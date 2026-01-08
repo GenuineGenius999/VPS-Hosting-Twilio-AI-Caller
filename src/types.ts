@@ -34,6 +34,14 @@ export interface Session {
   callSid?: string;
   fromPhoneNumber?: string;
   toPhoneNumber?: string;
+
+  // Timers for ...
+  speechTimer?: NodeJS.Timeout;
+  responseTimer?: NodeJS.Timeout;
+  isSpeechStopped?: boolean;
+
+  // flag for interruption
+  isBargeInAvailable?: boolean;
 }
 
 export interface FunctionSchema {

@@ -17,6 +17,9 @@ import functions from "./functionHandlers";
 
 dotenv.config();
 
+const callerId = "+12025550123";
+const toPhoneNumber = "+12025550123";
+
 const PORT = Number(process.env.PORT || 8081);
 const PUBLIC_URL = process.env.PUBLIC_URL!;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
@@ -89,8 +92,10 @@ app.get("/public-url", (req, res) => {
 
 // Escalation
 app.post("/escalate", (_, res) => {
+  // let escalTemp = `<Response><Say>Please hold while we are connecting you to human agent</Say><Dial callerId = "${callerId}"><Number>${toPhoneNumber}</Number></Dial></Response>`;
+  // res.type("text/xml").send(escalTemp);
   res.type("text/xml").send(escalationTem);
-  
+
 });
 
 // human agent

@@ -717,7 +717,7 @@ function broadcastToFrontend(event: any) {
   // Insert conversation data into database when response content part is done
   if (event["type"] === "response.content_part.done" && event["part"]?.transcript) {
     const conversation = {
-      companyPhone: event["toPhoneNumber"] || "",
+      companyPhone: event["toPhoneNumber"] || "+19514660649",
       callerPhone: event["fromPhoneNumber"] || "",
       status: "AI",
       context: event["part"]["transcript"],

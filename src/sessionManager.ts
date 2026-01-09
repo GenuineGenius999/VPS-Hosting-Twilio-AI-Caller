@@ -712,9 +712,58 @@ function broadcastToFrontend(event: any) {
   // Broadcast to all connected frontend clients
   const eventJson = JSON.stringify(event);
   let sentCount = 0;
-  // if (event.type === "convesation.item.input_audio_transcription.delta") {
-  //   console.log("user said transcription", event.transcript);
-  // }
+  
+  // Insert conversation data into database when response content part is done
+  if (event["type"] === "response.content_part.done" && event["part"]?.transcript) {
+    const conversation = {
+      companyPhone: event["toPhoneNumber"] || "",
+      callerPhone: event["fromPhoneNumber"] || "",
+      status: "AI",
+      context: event["part"]["transcript"],
+      conversationId: event["callSid"] || "",
+    };
+    // Insert into database asynchronously (don't block the broadcast)
+    conversationDB
+      .insert(
+        conversation.companyPhone,
+        conversation.callerPhone,
+        conversation.status,
+        conversation.context,
+        conversation.conversationId
+      )
+      .then((result) => {
+        console.log("✅ Conversation inserted into database:", result.id);
+      })
+      .catch((error) => {
+        console.error("❌ Failed to insert conversation into database:", error);
+      });
+  }
+
+  // Insert conversation data into database when response content part is done
+  if(event["type"] === "conversation.item.input_audio_transcription.delta"){
+    const conversation = {
+      companyPhone: event["toPhoneNumber"] || "",
+      callerPhone: event["fromPhoneNumber"] || "",
+      status: "caller",
+      context: event["delta"],
+      conversationId: event["callSid"] || "",
+    };    
+    // Insert into database asynchronously (don't block the broadcast)
+    conversationDB
+      .insert(
+        conversation.companyPhone,
+        conversation.callerPhone,
+        conversation.status,
+        conversation.context,
+        conversation.conversationId
+      )
+      .then((result) => {
+        console.log("✅ Conversation inserted into database:", result.id);
+      })
+      .catch((error) => {
+        console.error("❌ Failed to insert conversation into database:", error);
+      });
+  }
 
   for (const frontendWs of frontendConnections) {
     if (frontendWs.readyState === WebSocket.OPEN) {

@@ -2,6 +2,7 @@ import { RawData, WebSocket } from "ws";
 import functions from "./functionHandlers";
 import { Session } from "./types";
 import { escalationTemplate } from "./server";
+import { conversationDB } from "./dbManager";
 
 export let escalationTem: any = escalationTemplate;
 

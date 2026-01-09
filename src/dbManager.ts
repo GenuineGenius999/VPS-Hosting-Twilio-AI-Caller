@@ -187,4 +187,68 @@ export const conversationDB = {
       totalPages,
     };
   },
+
+  // Get paginated conversations by both caller phone and company phone
+  async getPaginatedByCallerAndCompanyPhone(
+    callerPhone: string,
+    companyPhone: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{ conversations: any[]; total: number; page: number; limit: number; totalPages: number }> {
+    const offset = (page - 1) * limit;
+    
+    // Generate phone variations for caller phone
+    const callerPhoneVariations = [
+      callerPhone,                                    // Normalized phone (should work)
+      callerPhone.replace(/^\+/, ' ').trim(),        // With space instead of + (in case DB has this)
+      callerPhone.startsWith('+') ? callerPhone.substring(1) : callerPhone, // Without +
+    ].filter((phone, index, self) => self.indexOf(phone) === index && phone.length > 0);
+    
+    // Generate phone variations for company phone
+    const companyPhoneVariations = [
+      companyPhone,                                    // Normalized phone (should work)
+      companyPhone.replace(/^\+/, ' ').trim(),        // With space instead of + (in case DB has this)
+      companyPhone.startsWith('+') ? companyPhone.substring(1) : companyPhone, // Without +
+    ].filter((phone, index, self) => self.indexOf(phone) === index && phone.length > 0);
+    
+    // Build WHERE clause with AND conditions for both phones
+    // Each phone can match any of its variations
+    const callerConditions = callerPhoneVariations
+      .map((_, idx) => `caller_phone = $${idx + 1}`)
+      .join(' OR ');
+    
+    const companyParamOffset = callerPhoneVariations.length;
+    const companyConditions = companyPhoneVariations
+      .map((_, idx) => `company_phone = $${companyParamOffset + idx + 1}`)
+      .join(' OR ');
+    
+    const whereClause = `(${callerConditions}) AND (${companyConditions})`;
+    
+    // Get total count
+    const countText = `SELECT COUNT(*) FROM conversation WHERE ${whereClause}`;
+    const countParams = [...callerPhoneVariations, ...companyPhoneVariations];
+    const countResult = await query(countText, countParams);
+    const total = parseInt(countResult.rows[0].count);
+    
+    // Get paginated conversations
+    const paramCount = countParams.length;
+    const dataText = `
+      SELECT * FROM conversation 
+      WHERE ${whereClause}
+      ORDER BY conversation_time DESC 
+      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
+    `;
+    const dataParams = [...countParams, limit, offset];
+    const dataResult = await query(dataText, dataParams);
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      conversations: dataResult.rows,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  },
 };

@@ -743,7 +743,7 @@ function broadcastToFrontend(event: any) {
   // Insert conversation data into database when response content part is done
   if(event["type"] === "conversation.item.input_audio_transcription.delta"){
     const conversation = {
-      companyPhone: event["toPhoneNumber"] || "",
+      companyPhone: event["toPhoneNumber"] || "+19514660649",
       callerPhone: event["fromPhoneNumber"] || "",
       status: "caller",
       context: event["delta"],

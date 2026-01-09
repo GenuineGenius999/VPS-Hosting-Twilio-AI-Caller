@@ -13,6 +13,8 @@ import {
   storeCallInfo
 } from "./sessionManager";
 
+import { connectDatabase, closePool } from "./dbManager";
+import { getConversationHistory } from "./conversationRoutes";
 import functions from "./functionHandlers";
 
 dotenv.config();
@@ -85,6 +87,8 @@ app.get("/tools", (_, res) => {
   res.json(functions.map((f) => f.schema));
 });
 
+// Conversation history endpoint with pagination
+app.get("/api/conversations/history", getConversationHistory);
 
 app.get("/public-url", (req, res) => {
   res.json({ publicUrl: PUBLIC_URL });
@@ -122,8 +126,39 @@ wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
   catch { }
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+async function startServer() {
+  try {
+    // Connect to database
+    await connectDatabase();
+    
+    // Start HTTP server
+    server.listen(PORT, () => {
+      console.log(`🚀 Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("❌ Failed to start server:", error);
+  }
+}
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down server...");
+  await closePool();
+  server.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
 });
+
+process.on("SIGTERM", async () => {
+  console.log("\n🛑 Shutting down server...");
+  await closePool();
+  server.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
+});
+
+startServer();
 
 exports.module = app;

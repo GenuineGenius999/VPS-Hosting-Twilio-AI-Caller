@@ -6,7 +6,8 @@ import { conversationDB } from "./dbManager";
  * Retrieve paginated conversation history for a phone number
  * 
  * Query parameters:
- * - phone: The phone number to retrieve conversations for (required)
+ * - callerPhone: The caller's phone number to retrieve conversations for (required)
+ * - companyPhone: The company's phone number to filter by (required)
  * - page: Page number (default: 1)
  * - limit: Number of messages per page (default: 10)
  */
@@ -37,21 +38,32 @@ function normalizePhoneNumber(phone: string): string {
 
 export async function getConversationHistory(req: Request, res: Response): Promise<void> {
   try {
-    let { phone, page: pageParam, limit: limitParam } = req.query;
+    let { callerPhone, companyPhone, page: pageParam, limit: limitParam } = req.query;
 
-    // Validate required parameter
-    if (!phone || typeof phone !== "string") {
+    // Validate required parameters
+    if (!callerPhone || typeof callerPhone !== "string") {
       res.status(400).json({
         status: "error",
         statusCode: 400,
-        message: "Missing or invalid 'phone' parameter. Phone number is required.",
+        message: "Missing or invalid 'callerPhone' parameter. Caller phone number is required.",
         error: "VALIDATION_ERROR",
       });
       return;
     }
 
-    // Normalize phone number to handle URL encoding issues
-    phone = normalizePhoneNumber(phone);
+    if (!companyPhone || typeof companyPhone !== "string") {
+      res.status(400).json({
+        status: "error",
+        statusCode: 400,
+        message: "Missing or invalid 'companyPhone' parameter. Company phone number is required.",
+        error: "VALIDATION_ERROR",
+      });
+      return;
+    }
+
+    // Normalize phone numbers to handle URL encoding issues
+    callerPhone = normalizePhoneNumber(callerPhone);
+    companyPhone = normalizePhoneNumber(companyPhone);
 
     // Parse and validate page parameter
     const page = pageParam ? parseInt(pageParam as string, 10) : 1;
@@ -77,8 +89,13 @@ export async function getConversationHistory(req: Request, res: Response): Promi
       return;
     }
 
-    // Try to get conversations by caller phone first
-    let result = await conversationDB.getPaginatedByCallerPhone(phone, page, limit);
+    // Get conversations filtered by both caller phone and company phone
+    let result = await conversationDB.getPaginatedByCallerAndCompanyPhone(
+      callerPhone,
+      companyPhone,
+      page,
+      limit
+    );
 
     // Return paginated results in enterprise API format
     res.status(200).json({

@@ -91,7 +91,7 @@ export const conversationDB = {
     conversationId: string
   ): Promise<any> {
     const text = `
-      INSERT INTO conversation (company_phone, caller_phone, status, context, conversation_id, conversation_time)
+      INSERT INTO conversation (company_phone, caller_phone, speaker, transcription, conversation_id, conversation_time)
       VALUES ($1, $2, $3, $4, $5, NOW())
       RETURNING *
     `;

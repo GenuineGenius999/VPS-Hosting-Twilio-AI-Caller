@@ -461,7 +461,7 @@ function handleModelMessage(session: Session, data: RawData) {
         session.isBargeInAvailable = true;
         interruptAssistant(session);
       }
-    }, 500)
+    }, 300)
   }
 
   if (event.type === "response.audio.delta") { // Outgoing voice from OpenAI Realtime to Twilio

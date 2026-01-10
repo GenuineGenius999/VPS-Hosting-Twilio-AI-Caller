@@ -192,10 +192,13 @@ export const conversationDB = {
   async getPaginatedByCallerAndCompanyPhone(
     callerPhone: string,
     companyPhone: string,
+    sortBy: "asc" | "desc" = "asc",
     page: number = 1,
     limit: number = 10
   ): Promise<{ conversations: any[]; total: number; page: number; limit: number; totalPages: number }> {
     const offset = (page - 1) * limit;
+    // Validate and normalize sortBy to prevent SQL injection
+    const orderDirection = (sortBy === "desc" ? "DESC" : "ASC");
     
     // Generate phone variations for caller phone
     const callerPhoneVariations = [
@@ -230,15 +233,149 @@ export const conversationDB = {
     const countResult = await query(countText, countParams);
     const total = parseInt(countResult.rows[0].count);
     
-    // Get paginated conversations
+    // Get paginated conversations with sorting
     const paramCount = countParams.length;
     const dataText = `
       SELECT * FROM conversation 
       WHERE ${whereClause}
-      ORDER BY conversation_time DESC 
+      ORDER BY conversation_time ${orderDirection}
       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
     `;
     const dataParams = [...countParams, limit, offset];
+    const dataResult = await query(dataText, dataParams);
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      conversations: dataResult.rows,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  },
+
+  // Get paginated conversations by conversation ID
+  async getPaginatedByConversationId(
+    conversationId: string,
+    sortBy: "asc" | "desc" = "asc",
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{ conversations: any[]; total: number; page: number; limit: number; totalPages: number }> {
+    const offset = (page - 1) * limit;
+    // Validate and normalize sortBy to prevent SQL injection
+    const orderDirection = (sortBy === "desc" ? "DESC" : "ASC");
+    
+    // Get total count for the conversation
+    const countText = `SELECT COUNT(*) FROM conversation WHERE conversation_id = $1`;
+    const countResult = await query(countText, [conversationId]);
+    const total = parseInt(countResult.rows[0].count);
+    
+    // Get paginated conversations with sorting
+    const dataText = `
+      SELECT * FROM conversation 
+      WHERE conversation_id = $1
+      ORDER BY conversation_time ${orderDirection}
+      LIMIT $2 OFFSET $3
+    `;
+    const dataParams = [conversationId, limit, offset];
+    const dataResult = await query(dataText, dataParams);
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      conversations: dataResult.rows,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
+  },
+
+  // Flexible paginated conversations method that handles all filter combinations
+  async getPaginatedConversations(
+    filters: {
+      callerPhone?: string;
+      companyPhone?: string;
+      conversationId?: string;
+    },
+    sortBy: "asc" | "desc" = "asc",
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{ conversations: any[]; total: number; page: number; limit: number; totalPages: number }> {
+    const offset = (page - 1) * limit;
+    // Validate and normalize sortBy to prevent SQL injection
+    const orderDirection = (sortBy === "desc" ? "DESC" : "ASC");
+    
+    const whereConditions: string[] = [];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    // Handle conversationId filter (exact match) - add first
+    if (filters.conversationId) {
+      whereConditions.push(`conversation_id = $${paramIndex}`);
+      params.push(filters.conversationId);
+      paramIndex++;
+    }
+
+    // Handle callerPhone filter (with variations)
+    if (filters.callerPhone) {
+      const callerPhoneVariations = [
+        filters.callerPhone,                                    // Normalized phone (should work)
+        filters.callerPhone.replace(/^\+/, ' ').trim(),        // With space instead of + (in case DB has this)
+        filters.callerPhone.startsWith('+') ? filters.callerPhone.substring(1) : filters.callerPhone, // Without +
+      ].filter((phone, index, self) => self.indexOf(phone) === index && phone.length > 0);
+
+      if (callerPhoneVariations.length > 0) {
+        const callerParamStart = paramIndex;
+        const callerConditions = callerPhoneVariations
+          .map((_, idx) => `caller_phone = $${callerParamStart + idx}`)
+          .join(' OR ');
+        whereConditions.push(`(${callerConditions})`);
+        params.push(...callerPhoneVariations);
+        paramIndex += callerPhoneVariations.length;
+      }
+    }
+
+    // Handle companyPhone filter (with variations)
+    if (filters.companyPhone) {
+      const companyPhoneVariations = [
+        filters.companyPhone,                                    // Normalized phone (should work)
+        filters.companyPhone.replace(/^\+/, ' ').trim(),        // With space instead of + (in case DB has this)
+        filters.companyPhone.startsWith('+') ? filters.companyPhone.substring(1) : filters.companyPhone, // Without +
+      ].filter((phone, index, self) => self.indexOf(phone) === index && phone.length > 0);
+
+      if (companyPhoneVariations.length > 0) {
+        const companyParamStart = paramIndex;
+        const companyConditions = companyPhoneVariations
+          .map((_, idx) => `company_phone = $${companyParamStart + idx}`)
+          .join(' OR ');
+        whereConditions.push(`(${companyConditions})`);
+        params.push(...companyPhoneVariations);
+        paramIndex += companyPhoneVariations.length;
+      }
+    }
+
+    // Build WHERE clause
+    const whereClause = whereConditions.join(' AND ');
+
+    // Get total count
+    const countText = `SELECT COUNT(*) FROM conversation WHERE ${whereClause}`;
+    const countResult = await query(countText, params);
+    const total = parseInt(countResult.rows[0].count);
+
+    // Build paginated query with correct parameter indices
+    // After adding all filter params, next param index is params.length + 1
+    const limitParamIndex = params.length + 1;
+    const offsetParamIndex = params.length + 2;
+    
+    const dataText = `
+      SELECT * FROM conversation 
+      WHERE ${whereClause}
+      ORDER BY conversation_time ${orderDirection}
+      LIMIT $${limitParamIndex} OFFSET $${offsetParamIndex}
+    `;
+    const dataParams = [...params, limit, offset];
     const dataResult = await query(dataText, dataParams);
     
     const totalPages = Math.ceil(total / limit);

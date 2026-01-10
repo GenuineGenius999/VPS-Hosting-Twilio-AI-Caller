@@ -3,13 +3,22 @@ import { conversationDB } from "./dbManager";
 
 /**
  * GET /api/conversations/history
- * Retrieve paginated conversation history for a phone number
+ * Retrieve paginated conversation history with flexible filtering
  * 
- * Query parameters:
- * - callerPhone: The caller's phone number to retrieve conversations for (required)
- * - companyPhone: The company's phone number to filter by (required)
+ * Query parameters (all optional, at least one filter parameter required):
+ * - callerPhone: Filter by caller's phone number
+ * - companyPhone: Filter by company's phone number
+ * - conversationId: Filter by conversation ID
+ * - sortBy: Sort order - "asc" or "desc" (default: "asc")
  * - page: Page number (default: 1)
  * - limit: Number of messages per page (default: 10)
+ * 
+ * Filter combinations supported:
+ * - Only callerPhone
+ * - Only companyPhone
+ * - Only conversationId
+ * - callerPhone + companyPhone
+ * - callerPhone + companyPhone + conversationId
  */
 /**
  * Normalize phone number for database queries
@@ -38,34 +47,38 @@ function normalizePhoneNumber(phone: string): string {
 
 export async function getConversationHistory(req: Request, res: Response): Promise<void> {
   try {
-    let { callerPhone, companyPhone, page: pageParam, limit: limitParam } = req.query;
+    let { conversationId, callerPhone, companyPhone, sortBy, page: pageParam, limit: limitParam } = req.query;
+    console.log(req.query,"stress");
+    
+    // Validate that at least one filter parameter is provided
+    const hasCallerPhone = callerPhone && typeof callerPhone === "string";
+    const hasCompanyPhone = companyPhone && typeof companyPhone === "string";
+    const hasConversationId = conversationId && typeof conversationId === "string";
 
-    // Validate required parameters
-    if (!callerPhone || typeof callerPhone !== "string") {
+    if (!hasCallerPhone && !hasCompanyPhone && !hasConversationId) {
       res.status(400).json({
         status: "error",
         statusCode: 400,
-        message: "Missing or invalid 'callerPhone' parameter. Caller phone number is required.",
+        message: "At least one filter parameter is required: 'callerPhone', 'companyPhone', or 'conversationId'.",
         error: "VALIDATION_ERROR",
       });
       return;
     }
 
-    if (!companyPhone || typeof companyPhone !== "string") {
+    // Set default values for sortBy, page, and limit
+    if (!sortBy || typeof sortBy !== "string") {
+      sortBy = "desc"; // Default to ascending
+    } else if (sortBy !== "asc" && sortBy !== "desc") {
       res.status(400).json({
         status: "error",
         statusCode: 400,
-        message: "Missing or invalid 'companyPhone' parameter. Company phone number is required.",
+        message: "Invalid 'sortBy' parameter. Must be 'asc' or 'desc'.",
         error: "VALIDATION_ERROR",
       });
       return;
     }
 
-    // Normalize phone numbers to handle URL encoding issues
-    callerPhone = normalizePhoneNumber(callerPhone);
-    companyPhone = normalizePhoneNumber(companyPhone);
-
-    // Parse and validate page parameter
+    // Parse and validate page parameter with default
     const page = pageParam ? parseInt(pageParam as string, 10) : 1;
     if (isNaN(page) || page < 1) {
       res.status(400).json({
@@ -77,7 +90,7 @@ export async function getConversationHistory(req: Request, res: Response): Promi
       return;
     }
 
-    // Parse and validate limit parameter
+    // Parse and validate limit parameter with default
     const limit = limitParam ? parseInt(limitParam as string, 10) : 10;
     if (isNaN(limit) || limit < 1 || limit > 100) {
       res.status(400).json({
@@ -89,10 +102,26 @@ export async function getConversationHistory(req: Request, res: Response): Promi
       return;
     }
 
-    // Get conversations filtered by both caller phone and company phone
-    let result = await conversationDB.getPaginatedByCallerAndCompanyPhone(
-      callerPhone,
-      companyPhone,
+    // Normalize phone numbers if provided
+    let normalizedCallerPhone: string | undefined;
+    let normalizedCompanyPhone: string | undefined;
+
+    if (hasCallerPhone) {
+      normalizedCallerPhone = normalizePhoneNumber(callerPhone as string);
+    }
+
+    if (hasCompanyPhone) {
+      normalizedCompanyPhone = normalizePhoneNumber(companyPhone as string);
+    }
+
+    // Use flexible filtering method that handles all combinations
+    const result = await conversationDB.getPaginatedConversations(
+      {
+        callerPhone: normalizedCallerPhone,
+        companyPhone: normalizedCompanyPhone,
+        conversationId: hasConversationId ? (conversationId as string) : undefined,
+      },
+      sortBy as "asc" | "desc",
       page,
       limit
     );

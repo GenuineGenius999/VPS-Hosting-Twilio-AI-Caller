@@ -135,6 +135,7 @@ function handleTwilioMessage(
         toPhoneNumber: callInfo.to,
         isSpeechStopped: false,
         isBargeInAvailable: false,
+        isAiSpeaking: false
       };
 
       sessions.set(streamSid, session);
@@ -150,11 +151,8 @@ function handleTwilioMessage(
 
       connectModel(session);
 
-      session.greetingTimer = setTimeout(() => {
-        if (session.callerState == "idle" && !session.hasAssistantSpoken) {
-          sendGreeting(session);
-        }
-      }, 1000);
+      console.log("model connected...");
+      console.log("greeted!!");
 
       break;
     }
@@ -175,6 +173,7 @@ function handleTwilioMessage(
     case "mark": {
       const session = sessions.get(msg.streamSid);
       if (!session || !session.modelConn) return;
+      session.isAiSpeaking = false;
 
       // Handle mark event in AI finished speaking situation
       if (msg.mark.name === "ai_done") {
@@ -189,8 +188,10 @@ function handleTwilioMessage(
         session.silenceTimer = setTimeout(() => {
           switch (session.callerState) {
             case "idle": {
-              console.log("Silence Detected");
-              handleSilence(session);
+              if (!session.isAiSpeaking) {
+                console.log("Silence Detected");
+                handleSilence(session);
+              }
               break;
             }
             case "silence": {
@@ -247,6 +248,7 @@ function connectModel(session: Session) {
     );
 
     session.modelConn.on("open", () => {
+
       send(session.modelConn!, {
         type: "session.update",
         session: {
@@ -255,7 +257,7 @@ function connectModel(session: Session) {
           turn_detection: {
             type: "server_vad",
             silence_duration_ms: 800,
-            threshold: 0.9,
+            threshold: 0.7,
           },
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
@@ -272,13 +274,21 @@ function connectModel(session: Session) {
           4. If the caller asks for escalation, please just say "ok no problem, I will connect you." and add ///// at the end of the transcription.
           5. And in some other cases like when the bot has low confidence and when emotion state is very bad upon the result of sentimental analysis, it should ask a caller if it would be helpful to connect the human agent.
           6. And only when caller asks to end the call or agree to finish the call, please add /?/ at the end of the transcription.
-          7. If the caller sends "<<Silence>>", please say "It seems that we are not in the session. How about we end the suggest call?".
+          7. If the caller sends "<<Silence>>", please say "It seems that we are not in the session. How about we end the call?".
           8. If the caller sends "<<Greeting>>", please say "Hello, Nice to meet you, How can I assist you today?".
           Please NEVER forget the rules. Specially never say caller's Emotion!.
           Please give concise answers within 20 words.
           `
+
         },
       });
+
+      session.greetingTimer = setTimeout(() => {
+        if (session.callerState == "idle" && !session.hasAssistantSpoken) {
+          sendGreeting(session);
+          console.log("sent-first for model connected");
+        }
+      }, 100);
 
       // Notify frontend that a new session was created with phone number info
       broadcastToFrontend({
@@ -289,6 +299,7 @@ function connectModel(session: Session) {
         toPhoneNumber: session.toPhoneNumber,
       });
     });
+
 
     session.modelConn.on("message", (data) =>
       handleModelMessage(session, data)
@@ -457,6 +468,7 @@ function handleModelMessage(session: Session, data: RawData) {
 
     //ignore/disable barge-in 400ms-600ms
     session.hasAssistantSpoken = true;
+    session.isAiSpeaking = true;
 
     if (!session.responseStartTimestamp) {
       session.responseStartTimestamp = session.latestMediaTimestamp;
@@ -496,13 +508,10 @@ function handleModelMessage(session: Session, data: RawData) {
   if (event.type === "response.output_item.done") { // Function call handling
     const item = event.item;
 
-    // console.log("Text => ", item);
-    // updated part
-
     if (item && item.content) {
       if (item.content[0]?.transcript) {
-
         const text: string = item.content[0].transcript;
+
         if (item.type == "message" && text) {
           console.log("🎭 Text:", text, "---", session.streamSid);
 
@@ -518,7 +527,6 @@ function handleModelMessage(session: Session, data: RawData) {
               console.log("Making caller state to idle");
               session.callerState = "idle";
             }
-            // triggerEscalation(session);
             return;
           }
 
@@ -644,9 +652,9 @@ function handleSilence(session: Session) {
 function sendGreeting(session: Session) {
   if (!session.modelConn || session.hasAssistantSpoken) return;
 
-  console.log("Auto-Greeting...");
   session.hasAssistantSpoken = true;
 
+  console.log("Auto-Greeting...");
   send(session.modelConn, {
     type: "conversation.item.create",
     item: {
@@ -713,11 +721,11 @@ function broadcastToFrontend(event: any) {
   // Broadcast to all connected frontend clients
   const eventJson = JSON.stringify(event);
   let sentCount = 0;
-  
+
   // Insert conversation data into database when response content part is done
   if (event["type"] === "response.content_part.done" && event["part"]?.transcript) {
     const conversation = {
-      companyPhone: event["toPhoneNumber"] || "+19514660649",
+      companyPhone: event["toPhoneNumber"] || "",
       callerPhone: event["fromPhoneNumber"] || "",
       status: "AI",
       context: event["part"]["transcript"],
@@ -741,14 +749,14 @@ function broadcastToFrontend(event: any) {
   }
 
   // Insert conversation data into database when response content part is done
-  if(event["type"] === "conversation.item.input_audio_transcription.delta"){
+  if (event["type"] === "conversation.item.input_audio_transcription.delta") {
     const conversation = {
-      companyPhone: event["toPhoneNumber"] || "+19514660649",
+      companyPhone: event["toPhoneNumber"] || "",
       callerPhone: event["fromPhoneNumber"] || "",
       status: "caller",
       context: event["delta"],
       conversationId: event["callSid"] || "",
-    };    
+    };
     // Insert into database asynchronously (don't block the broadcast)
     conversationDB
       .insert(

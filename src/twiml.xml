@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Welcome to Our InboxxHQ Support.</Say>
+  <Say>Welcome to Our InboxxHQ Support. Please wait a while I'm connect you to AI voice.</Say>
   <Connect action="/escalate" method="POST">
     <Stream url="{{WS_URL}}" />
   </Connect>

@@ -40,6 +40,7 @@ export interface Session {
   responseTimer?: NodeJS.Timeout;
   isSpeechStopped?: boolean;
 
+  isAiSpeaking?: boolean;
   // flag for interruption
   isBargeInAvailable?: boolean;
 }

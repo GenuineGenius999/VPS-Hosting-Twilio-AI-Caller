@@ -257,7 +257,7 @@ function connectModel(session: Session) {
           turn_detection: {
             type: "server_vad",
             silence_duration_ms: 800,
-            threshold: 0.7,
+            threshold: 0.9,
           },
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",

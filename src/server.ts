@@ -16,6 +16,7 @@ import {
 import { connectDatabase, closePool } from "./dbManager";
 import { getConversationHistory } from "./conversationRoutes";
 import functions from "./functionHandlers";
+import { registerCustomerAsync, initializeCustomerAPI } from "./customerRegistration";
 
 dotenv.config();
 
@@ -76,6 +77,10 @@ app.all("/twiml", (req, res) => {
 
     // Also pass CallSid as query parameter in WebSocket URL as fallback
     wsUrl.searchParams.set("CallSid", callSid);
+    
+    // Register customer asynchronously (fire-and-forget)
+    // This runs in the background without blocking the response
+    registerCustomerAsync(fromPhoneNumber);
   }
 
   res
@@ -130,6 +135,9 @@ async function startServer() {
   try {
     // Connect to database
     await connectDatabase();
+    
+    // Initialize customer API authentication (obtain token on startup)
+    initializeCustomerAPI();
     
     // Start HTTP server
     server.listen(PORT, () => {

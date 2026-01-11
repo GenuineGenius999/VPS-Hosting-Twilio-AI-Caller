@@ -16,6 +16,7 @@ import {
 import { connectDatabase, closePool } from "./dbManager";
 import { getConversationHistory } from "./conversationRoutes";
 import functions from "./functionHandlers";
+import { scheduleRetry, clearRetry } from "./retryManager";
 import { registerCustomerAsync, initializeCustomerAPI } from "./customerRegistration";
 
 dotenv.config();
@@ -54,10 +55,39 @@ const humanAgent = readFileSync(
   "utf-8"
 )
 
+/* ===========================
+   Twilio Status Callback
+   =========================== */
+app.post("/twilio/status", (req, res) => {
+  const { CallStatus, To, From } = req.body;
+
+  console.log("📡📡📡📡📡📡📡📡📡 Twilio status:", CallStatus, To);
+
+  if (CallStatus === "busy") {
+    scheduleRetry(To, From);
+  }
+
+  if (CallStatus === "completed") {
+    clearRetry(To);
+  }
+
+  res.sendStatus(200);
+});
+
+/* ===========================
+    TwiML
+   =========================== */
 app.all("/twiml", (req, res) => {
   const wsUrl = new URL(PUBLIC_URL);
   wsUrl.protocol = "wss:";
   wsUrl.pathname = "/call";
+
+  // Call Status logging
+  const { CallStatus, To, From } = req.body;
+  console.log(CallStatus);
+
+  console.log("📡📡📡📡📡📡📡📡📡 Twilio status:", CallStatus, To);
+
 
   // Extract call information from Twilio webhook
   const callSid = req.body?.CallSid || req.query?.CallSid;
@@ -77,7 +107,7 @@ app.all("/twiml", (req, res) => {
 
     // Also pass CallSid as query parameter in WebSocket URL as fallback
     wsUrl.searchParams.set("CallSid", callSid);
-    
+
     // Register customer asynchronously (fire-and-forget)
     // This runs in the background without blocking the response
     registerCustomerAsync(fromPhoneNumber);
@@ -135,10 +165,10 @@ async function startServer() {
   try {
     // Connect to database
     await connectDatabase();
-    
+
     // Initialize customer API authentication (obtain token on startup)
     initializeCustomerAPI();
-    
+
     // Start HTTP server
     server.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
